@@ -1,0 +1,66 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  Int       @id @default(autoincrement())
+  email               String?   @unique
+  phoneNumber         String?   @unique
+  googleId            String?   @unique
+  appleId             String?   @unique
+  name                String?
+  about               String?
+  bio                 String?
+  birthDate           DateTime?
+  gender              String?
+  photoUrl            String?
+  latitude            Float?
+  longitude           Float?
+  isOnline            Boolean   @default(false)
+  lastSeenAt          DateTime?
+  isRegistered        Boolean   @default(false)
+  isEmailVerified     Boolean   @default(false)
+  isPhoneVerified     Boolean   @default(false)
+  hashedRefreshToken  String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  interests       UserInterest[]
+}
+
+model Interest {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+
+  users UserInterest[]
+}
+
+model UserInterest {
+  userId     Int
+  interestId Int
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interest   Interest @relation(fields: [interestId], references: [id], onDelete: Cascade)
+
+  @@id([userId, interestId])
+}
+
+model PhoneVerificationCode {
+  id          Int      @id @default(autoincrement())
+  phoneNumber String   @unique
+  codeHash    String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

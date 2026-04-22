@@ -1,0 +1,74 @@
+{
+  "expo": {
+    "name": "diploma",
+    "slug": "diploma",
+    "owner": "yurimytko",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/StepIn.png",
+    "scheme": "diploma",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yurimytko.diploma",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Дозволь доступ до геолокації, щоб показувати людей поруч.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Дозволь доступ до геолокації, щоб оновлювати позицію та показувати людей поруч."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.yurimytko.diploma",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/StepIn.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#E2A0FF",
+          "dark": {
+            "backgroundColor": "#000000"
+          }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Дозволь доступ до фото, щоб завантажити фото профілю."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Дозволь доступ до геолокації, щоб показувати людей поруч.",
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-secure-store",
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
