@@ -19,9 +19,22 @@ export type MapUserProfileBottomSheetProps = {
   profile: MapUserProfileSheetDto | null;
   bottomInset: number;
   onPressMessage: () => void;
+  onPressAddFriend: () => void;
   onPressSendLocation: () => void;
+  addingFriend?: boolean;
   loading?: boolean;
 };
+
+function getFriendActionTitle(profile: MapUserProfileSheetDto): string {
+  if (profile.isFriend) return 'Повідомлення';
+  if (profile.friendRequestStatus === 'outgoing') return 'Заявка надіслана';
+  if (profile.friendRequestStatus === 'incoming') return 'Заявка отримана';
+  return 'Додати в друзі';
+}
+
+function shouldShowRelationshipPill(profile: MapUserProfileSheetDto): boolean {
+  return profile.isFriend || profile.friendRequestStatus !== 'none';
+}
 
 function formatRatingUk(value: number): string {
   return value.toFixed(1).replace('.', ',');
@@ -33,7 +46,9 @@ export function MapUserProfileBottomSheet({
   profile,
   bottomInset,
   onPressMessage,
+  onPressAddFriend,
   onPressSendLocation,
+  addingFriend = false,
 }: MapUserProfileBottomSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
   const maxSheetHeight = Math.round(windowHeight * 0.88);
@@ -122,10 +137,12 @@ export function MapUserProfileBottomSheet({
                 </Text>
 
                 <View style={styles.badgesRow}>
-                  <View style={styles.friendPill}>
-                    <Text style={styles.friendPillText}>{profile.relationshipLabel}</Text>
-                  </View>
-                  <View style={styles.timePill}>
+                  {shouldShowRelationshipPill(profile) ? (
+                    <View style={styles.friendPill}>
+                      <Text style={styles.friendPillText}>{profile.relationshipLabel}</Text>
+                    </View>
+                  ) : null}
+                  <View style={[styles.timePill, profile.isOnline && styles.onlinePill]}>
                     <Text style={styles.timePillText}>{profile.lastSeenLabel}</Text>
                   </View>
                 </View>
@@ -171,7 +188,14 @@ export function MapUserProfileBottomSheet({
 
               <View style={styles.actionsRow}>
                 <View style={styles.actionBtnWrap}>
-                  <AppButton variant="outline" shape="pill" title="Повідомлення" onPress={onPressMessage} />
+                  <AppButton
+                    variant="outline"
+                    shape="pill"
+                    title={getFriendActionTitle(profile)}
+                    onPress={profile.isFriend ? onPressMessage : onPressAddFriend}
+                    disabled={!profile.isFriend && profile.friendRequestStatus !== 'none'}
+                    loading={!profile.isFriend && addingFriend}
+                  />
                 </View>
                 <View style={styles.actionBtnWrapLast}>
                   <AppButton
@@ -344,6 +368,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: '#E8EAEF',
+  },
+  onlinePill: {
+    backgroundColor: '#DCFCE7',
   },
   timePillText: {
     fontFamily: 'Inter',

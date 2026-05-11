@@ -1,10 +1,11 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Platform, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BASE_URL } from '@/constants/api';
 import { MapUserProfileBottomSheet } from '@/components/map/MapUserProfileBottomSheet';
+import type { MapUserFriendRequestStatus } from '@/types/map-user-profile-sheet';
 import { fetchWithAuth } from '@/utils/fetchWithAuth';
 import { buildMapUserProfileSheetFromMarker } from '@/utils/mapUserProfileSheet';
 import { getSession } from '@/utils/session';
@@ -22,6 +23,8 @@ type OnlineUserMarker = {
   longitude: number;
   photoUrl: string | null;
   name: string | null;
+  isOnline?: boolean | null;
+  lastSeenAt?: string | null;
   birthDate?: string | null;
   about?: string | null;
   statusEmoji?: string | null;
@@ -30,8 +33,114 @@ type OnlineUserMarker = {
   meetsCount?: number;
   friendsCount?: number;
   interests?: { interest: { id: number; name: string } }[];
+  isFriend?: boolean | null;
+  friendRequestStatus?: MapUserFriendRequestStatus | null;
+  relationshipLabel?: string | null;
   statusRelativeLabel?: string | null;
 };
+
+type FriendRelationship = {
+  isFriend: boolean;
+  friendRequestStatus: MapUserFriendRequestStatus;
+  relationshipLabel: string;
+};
+
+type FriendUser = {
+  id?: number | null;
+};
+
+type FriendshipDto = {
+  id: number;
+  friend?: FriendUser | null;
+  requester?: FriendUser | null;
+  addressee?: FriendUser | null;
+};
+
+const DEFAULT_RELATIONSHIP: FriendRelationship = {
+  isFriend: false,
+  friendRequestStatus: 'none',
+  relationshipLabel: 'Не твій друг',
+};
+
+async function readJsonArray(response: Response) {
+  const data = await response.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+function parseBackendBoolean(value: unknown) {
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function getFriendUserId(friendship: FriendshipDto) {
+  const id = Number(friendship.friend?.id);
+  return Number.isFinite(id) ? id : null;
+}
+
+function buildFriendRelationships(
+  friends: FriendshipDto[],
+  incomingRequests: FriendshipDto[],
+  outgoingRequests: FriendshipDto[],
+) {
+  const relationships = new Map<number, FriendRelationship>();
+
+  friends.forEach((friendship) => {
+    const userId = getFriendUserId(friendship);
+    if (userId === null) return;
+    relationships.set(userId, {
+      isFriend: true,
+      friendRequestStatus: 'none',
+      relationshipLabel: 'Твій друг',
+    });
+  });
+
+  incomingRequests.forEach((friendship) => {
+    const userId = getFriendUserId(friendship);
+    if (userId === null || relationships.has(userId)) return;
+    relationships.set(userId, {
+      isFriend: false,
+      friendRequestStatus: 'incoming',
+      relationshipLabel: 'Заявка отримана',
+    });
+  });
+
+  outgoingRequests.forEach((friendship) => {
+    const userId = getFriendUserId(friendship);
+    if (userId === null || relationships.has(userId)) return;
+    relationships.set(userId, {
+      isFriend: false,
+      friendRequestStatus: 'outgoing',
+      relationshipLabel: 'Заявка надіслана',
+    });
+  });
+
+  return relationships;
+}
+
+function mergeBackendUserIntoMarker(marker: OnlineUserMarker, user: any): OnlineUserMarker {
+  const isOnline = parseBackendBoolean(user?.isOnline);
+  const latitude = Number(isOnline ? user?.latitude : user?.lastLatitude ?? user?.latitude);
+  const longitude = Number(isOnline ? user?.longitude : user?.lastLongitude ?? user?.longitude);
+
+  return {
+    ...marker,
+    latitude: Number.isFinite(latitude) ? latitude : marker.latitude,
+    longitude: Number.isFinite(longitude) ? longitude : marker.longitude,
+    photoUrl: typeof user?.photoUrl === 'string' ? user.photoUrl : marker.photoUrl,
+    name: typeof user?.name === 'string' ? user.name : marker.name,
+    isOnline,
+    lastSeenAt: typeof user?.lastSeenAt === 'string' ? user.lastSeenAt : marker.lastSeenAt ?? null,
+    birthDate: typeof user?.birthDate === 'string' ? user.birthDate : marker.birthDate ?? null,
+    about: typeof user?.about === 'string' ? user.about : marker.about ?? null,
+    statusEmoji: typeof user?.statusEmoji === 'string' ? user.statusEmoji : marker.statusEmoji ?? null,
+    statusBody: typeof user?.statusBody === 'string' ? user.statusBody : marker.statusBody ?? null,
+    rating: Number.isFinite(Number(user?.rating)) ? Number(user.rating) : marker.rating ?? null,
+    meetsCount: Number.isFinite(Number(user?.meetsCount)) ? Number(user.meetsCount) : marker.meetsCount,
+    friendsCount: Number.isFinite(Number(user?.friendsCount)) ? Number(user.friendsCount) : marker.friendsCount,
+    interests: Array.isArray(user?.interests) ? user.interests : marker.interests,
+    statusRelativeLabel:
+      typeof user?.statusRelativeLabel === 'string' ? user.statusRelativeLabel : marker.statusRelativeLabel ?? null,
+  };
+}
 
 export default function MapTabScreen() {
   const colorScheme = useColorScheme();
@@ -48,6 +157,7 @@ export default function MapTabScreen() {
   const [regionDelta, setRegionDelta] = useState(0.02);
   const [selectedUser, setSelectedUser] = useState<OnlineUserMarker | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [addingFriend, setAddingFriend] = useState(false);
 
   useEffect(() => {
     if (phoneNumber) {
@@ -148,28 +258,47 @@ export default function MapTabScreen() {
 
   const loadOnlineUsers = useCallback(async () => {
     try {
-      const response = await fetchWithAuth(`${BASE_URL}/users`);
-      const data = await response.json().catch(() => []);
+      const [usersResponse, friendsResponse, incomingResponse, outgoingResponse] = await Promise.all([
+        fetchWithAuth(`${BASE_URL}/users`),
+        fetchWithAuth(`${BASE_URL}/friends`),
+        fetchWithAuth(`${BASE_URL}/friends/requests/incoming`),
+        fetchWithAuth(`${BASE_URL}/friends/requests/outgoing`),
+      ]);
 
-      if (!response.ok || !Array.isArray(data)) {
+      const data = await usersResponse.json().catch(() => []);
+
+      if (!usersResponse.ok || !Array.isArray(data)) {
         throw new Error('Не вдалося завантажити онлайн-користувачів');
       }
 
+      const relationships = buildFriendRelationships(
+        friendsResponse.ok ? await readJsonArray(friendsResponse) : [],
+        incomingResponse.ok ? await readJsonArray(incomingResponse) : [],
+        outgoingResponse.ok ? await readJsonArray(outgoingResponse) : [],
+      );
+
       const online = data
-        .filter((item: any) => item?.isOnline)
         .map((item: any) => {
-          const latitude = Number(item?.latitude);
-          const longitude = Number(item?.longitude);
+          const isOnline = parseBackendBoolean(item?.isOnline);
+          const rawLatitude = isOnline ? item?.latitude : item?.lastLatitude ?? item?.latitude;
+          const rawLongitude = isOnline ? item?.longitude : item?.lastLongitude ?? item?.longitude;
+          const latitude = Number(rawLatitude);
+          const longitude = Number(rawLongitude);
           if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
             return null;
           }
 
+          const userId = Number(item.id);
+          const relationship = relationships.get(userId) ?? DEFAULT_RELATIONSHIP;
+
           return {
-            id: Number(item.id),
+            id: userId,
             latitude,
             longitude,
             photoUrl: typeof item?.photoUrl === 'string' ? item.photoUrl : null,
             name: typeof item?.name === 'string' ? item.name : null,
+            isOnline,
+            lastSeenAt: typeof item?.lastSeenAt === 'string' ? item.lastSeenAt : null,
             birthDate: typeof item?.birthDate === 'string' ? item.birthDate : null,
             about: typeof item?.about === 'string' ? item.about : null,
             statusEmoji: typeof item?.statusEmoji === 'string' ? item.statusEmoji : null,
@@ -178,6 +307,9 @@ export default function MapTabScreen() {
             meetsCount: Number.isFinite(Number(item?.meetsCount)) ? Number(item.meetsCount) : undefined,
             friendsCount: Number.isFinite(Number(item?.friendsCount)) ? Number(item.friendsCount) : undefined,
             interests: Array.isArray(item?.interests) ? item.interests : undefined,
+            isFriend: relationship.isFriend,
+            friendRequestStatus: relationship.friendRequestStatus,
+            relationshipLabel: relationship.relationshipLabel,
             statusRelativeLabel:
               typeof item?.statusRelativeLabel === 'string' ? item.statusRelativeLabel : null,
           } as OnlineUserMarker;
@@ -267,6 +399,7 @@ export default function MapTabScreen() {
   const closeSheet = useCallback(() => {
     setSheetVisible(false);
     setSelectedUser(null);
+    setAddingFriend(false);
   }, []);
 
   const sheetProfile = useMemo(() => {
@@ -285,6 +418,77 @@ export default function MapTabScreen() {
     });
   }, [closeSheet, selectedUser]);
 
+  const onPressAddFriend = useCallback(() => {
+    console.log('[Map] Add friend pressed:', { selectedUser });
+
+    if (!selectedUser) {
+      console.log('[Map] Add friend skipped: no selected user');
+      return;
+    }
+
+    if (selectedUser.friendRequestStatus && selectedUser.friendRequestStatus !== 'none') {
+      console.log('[Map] Add friend skipped: request already has state', {
+        userId: selectedUser.id,
+        friendRequestStatus: selectedUser.friendRequestStatus,
+      });
+      return;
+    }
+
+    const addresseeId = selectedUser.id;
+    setAddingFriend(true);
+
+    console.log('[Map] Add friend request started:', {
+      url: `${BASE_URL}/friends/requests`,
+      body: { addresseeId },
+    });
+
+    fetchWithAuth(`${BASE_URL}/friends/requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addresseeId }),
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        console.log('[Map] Add friend response received:', {
+          status: response.status,
+          ok: response.ok,
+          data,
+        });
+
+        if (!response.ok) {
+          throw new Error(data?.message ?? 'Не вдалося надіслати заявку в друзі');
+        }
+
+        const nextRelationship: FriendRelationship = {
+          isFriend: false,
+          friendRequestStatus: 'outgoing',
+          relationshipLabel: 'Заявка надіслана',
+        };
+
+        setOnlineUsers((current) =>
+          current.map((user) => (user.id === addresseeId ? { ...user, ...nextRelationship } : user)),
+        );
+        setSelectedUser((current) => (current?.id === addresseeId ? { ...current, ...nextRelationship } : current));
+        console.log('[Map] Add friend UI updated:', {
+          addresseeId,
+          nextRelationship,
+        });
+        Alert.alert('Заявку надіслано', 'Користувач побачить вашу заявку в друзі.');
+      })
+      .catch((error: any) => {
+        console.warn('[Map] Add friend failed:', {
+          addresseeId,
+          message: error?.message,
+          error,
+        });
+        Alert.alert('Не вдалося додати в друзі', error?.message ?? 'Спробуйте ще раз пізніше.');
+      })
+      .finally(() => {
+        console.log('[Map] Add friend request finished:', { addresseeId });
+        setAddingFriend(false);
+      });
+  }, [selectedUser]);
+
   const onPressSendLocation = useCallback(() => {
     if (!selectedUser) return;
     closeSheet();
@@ -295,6 +499,43 @@ export default function MapTabScreen() {
       params: { conversationId: String(selectedUser.id), action: 'send_location' },
     });
   }, [closeSheet, selectedUser]);
+
+  const handleMarkerPress = useCallback(
+    (marker: OnlineUserMarker) => {
+      if (marker.id === -1) return;
+      if (marker.id === userMapData?.id) return;
+
+      console.log('[Map] User marker pressed:', {
+        marker,
+        sheetProfile: buildMapUserProfileSheetFromMarker(marker, BASE_URL),
+      });
+
+      setSelectedUser(marker);
+      setSheetVisible(true);
+
+      fetchWithAuth(`${BASE_URL}/users/${marker.id}`)
+        .then(async (response) => {
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data?.message ?? 'Не вдалося завантажити користувача');
+          }
+
+          const detailedMarker = mergeBackendUserIntoMarker(marker, data);
+          console.log('[Map] User details loaded:', {
+            user: data,
+            marker: detailedMarker,
+            sheetProfile: buildMapUserProfileSheetFromMarker(detailedMarker, BASE_URL),
+          });
+
+          setSelectedUser((current) => (current?.id === marker.id ? detailedMarker : current));
+          setOnlineUsers((current) => current.map((user) => (user.id === marker.id ? detailedMarker : user)));
+        })
+        .catch((error) => {
+          console.warn('[Map] Failed to load user details:', error);
+        });
+    },
+    [userMapData?.id],
+  );
 
   return (
     <View style={[styles.container, isDark && styles.containerDark]}>
@@ -314,13 +555,7 @@ export default function MapTabScreen() {
             key={`user-marker-${marker.id}-${showDotMarker ? 'dot' : 'avatar'}`}
             coordinate={{ latitude: marker.latitude, longitude: marker.longitude }}
             tracksViewChanges
-            onPress={() => {
-              // Відкриваємо bottom-sheet тільки для інших користувачів
-              if (marker.id === -1) return;
-              if (marker.id === userMapData?.id) return;
-              setSelectedUser(marker);
-              setSheetVisible(true);
-            }}
+            onPress={() => handleMarkerPress(marker)}
           >
             {showDotMarker ? (
               <View style={styles.dotWrap}>
@@ -362,7 +597,9 @@ export default function MapTabScreen() {
         profile={sheetProfile}
         bottomInset={insets.bottom}
         onPressMessage={onPressChat}
+        onPressAddFriend={onPressAddFriend}
         onPressSendLocation={onPressSendLocation}
+        addingFriend={addingFriend}
       />
     </View>
   );

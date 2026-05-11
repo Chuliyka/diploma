@@ -63,6 +63,13 @@ export default function SettingsTabScreen() {
       });
       return;
     }
+    if (key === 'security') {
+      router.push({
+        pathname: '/security',
+        ...(phoneNumber ? { params: { phoneNumber } } : {}),
+      });
+      return;
+    }
     Alert.alert('Незабаром', 'Цей розділ ще в розробці.');
   };
 

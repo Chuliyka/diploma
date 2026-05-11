@@ -100,6 +100,11 @@ export class UsersService {
   findOne(id: number) {
     return this.prisma.user.findUnique({
       where: { id },
+      include: {
+        interests: {
+          include: { interest: true },
+        },
+      },
     });
   }
 

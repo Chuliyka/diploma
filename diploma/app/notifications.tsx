@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Pressable,
   RefreshControl,
@@ -11,18 +11,17 @@ import {
   type SectionListRenderItemInfo,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MOCK_NOTIFICATIONS_RESPONSE } from '@/data/mock-notifications';
+import { BASE_URL } from '@/constants/api';
 import {
   mapNotificationDtoList,
   type NotificationItem,
   type NotificationListSection,
 } from '@/types/notifications';
+import { fetchWithAuth } from '@/utils/fetchWithAuth';
 import { formatNotificationTime, groupNotificationsBySections } from '@/utils/notifications';
 
 export default function NotificationsScreen() {
-  const [items, setItems] = useState<NotificationItem[]>(() =>
-    mapNotificationDtoList(MOCK_NOTIFICATIONS_RESPONSE),
-  );
+  const [items, setItems] = useState<NotificationItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const sections = useMemo(() => groupNotificationsBySections(items), [items]);
@@ -33,8 +32,21 @@ export default function NotificationsScreen() {
   };
 
   const loadFromServer = useCallback(async (): Promise<NotificationItem[]> => {
-    return mapNotificationDtoList(MOCK_NOTIFICATIONS_RESPONSE);
+    const response = await fetchWithAuth(`${BASE_URL}/notifications`);
+    const data = await response.json().catch(() => []);
+
+    if (!response.ok || !Array.isArray(data)) {
+      throw new Error('Не вдалося завантажити сповіщення');
+    }
+
+    return mapNotificationDtoList(data);
   }, []);
+
+  useEffect(() => {
+    void loadFromServer()
+      .then(setItems)
+      .catch((error) => console.warn('[Notifications] Failed to load notifications:', error));
+  }, [loadFromServer]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

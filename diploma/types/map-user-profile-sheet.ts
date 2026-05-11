@@ -3,6 +3,8 @@ export interface MapUserProfileInterestDto {
   name: string;
 }
 
+export type MapUserFriendRequestStatus = 'none' | 'incoming' | 'outgoing';
+
 export interface MapUserProfileSheetDto {
   id: number;
   displayName: string;
@@ -11,6 +13,9 @@ export interface MapUserProfileSheetDto {
   statusEmoji: string;
   statusLine: string;
   rating: number;
+  isOnline: boolean;
+  isFriend: boolean;
+  friendRequestStatus: MapUserFriendRequestStatus;
   relationshipLabel: string;
   lastSeenLabel: string;
   meetsCount: number;
