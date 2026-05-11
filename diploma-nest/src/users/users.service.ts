@@ -287,6 +287,41 @@ export class UsersService {
     };
   }
 
+  async loginByPhone(phoneNumber: string) {
+    this.assertPhoneNumber(phoneNumber);
+
+    const user = await this.prisma.user.findUnique({
+      where: { phoneNumber },
+      include: {
+        interests: {
+          include: { interest: true },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with phone ${phoneNumber} not found.`);
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { isOnline: true } as any,
+      include: {
+        interests: {
+          include: { interest: true },
+        },
+      },
+    });
+
+    const tokens = await this.authService.generateTokens(user.id);
+    return {
+      ...updatedUser,
+      isNewUser: false,
+      needsOnboarding: !updatedUser.name || !updatedUser.birthDate || !updatedUser.gender,
+      ...tokens,
+    };
+  }
+
   async verifyPhoneCode(phoneNumber: string, code: string) {
     this.assertPhoneNumber(phoneNumber);
 

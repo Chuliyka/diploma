@@ -45,6 +45,11 @@ export class UsersController {
     return this.usersService.sendPhoneVerificationCode(dto.phoneNumber);
   }
 
+  @Post('phone/login')
+  loginByPhone(@Body() dto: SendPhoneCodeDto) {
+    return this.usersService.loginByPhone(dto.phoneNumber);
+  }
+
   @Post('phone/verify-code')
   verifyPhoneCode(@Body() dto: VerifyPhoneCodeDto) {
     return this.usersService.verifyPhoneCode(dto.phoneNumber, dto.code);

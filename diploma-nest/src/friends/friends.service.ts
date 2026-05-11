@@ -113,6 +113,13 @@ export class FriendsService {
       include: this.friendshipInclude(),
     });
 
+    await this.notificationsService.createFriendRequestAcceptedNotification({
+      recipientId: updated.requesterId,
+      actorId: userId,
+      friendshipId: updated.id,
+      actorName: updated.addressee?.name,
+    });
+
     return this.toFriendshipResponse(updated, userId);
   }
 

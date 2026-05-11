@@ -5,6 +5,7 @@ import Constants from 'expo-constants';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNotifications } from '@/contexts/notifications';
 import { updatePresence } from '@/utils/presence';
 import { clearSession } from '@/utils/session';
 
@@ -33,6 +34,7 @@ const TAB_BAR_BOTTOM_OFFSET =36;
 
 export default function SettingsTabScreen() {
   const { phoneNumber } = useLocalSearchParams<{ phoneNumber?: string }>();
+  const { unreadCount } = useNotifications();
   const tabBarHeight = useBottomTabBarHeight();
   const footerHeight = tabBarHeight + TAB_BAR_BOTTOM_OFFSET;
 
@@ -124,6 +126,7 @@ export default function SettingsTabScreen() {
                     ) : row.mciName ? (
                       <MaterialCommunityIcons name={row.mciName} size={ROW_ICON_SIZE} color={ROW_ICON_COLOR} />
                     ) : null}
+                    {row.key === 'notifications' && unreadCount > 0 ? <View style={styles.notificationDot} /> : null}
                   </View>
                   <Text style={styles.rowLabel}>{row.label}</Text>
                 </TouchableOpacity>
@@ -200,6 +203,17 @@ const styles = StyleSheet.create({
     width: ICON_COL,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  notificationDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FF3B30',
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
   },
   rowLabel: {
     flex: 1,

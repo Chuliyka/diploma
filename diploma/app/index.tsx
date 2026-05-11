@@ -116,7 +116,22 @@ export default function SignupScreen() {
           router.replace({ pathname: '/about', params: { phoneNumber } });
           return;
         }
-        // User exists — save session and go straight to profile
+        console.log('[SendCode] Existing user found — logging in without SMS verification...');
+        const response = await fetch(`${BASE_URL}/users/phone/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phoneNumber }),
+        });
+        const data = await response.json().catch(() => ({}));
+        console.log('[SendCode] Existing user login response:', response.status, data);
+        if (!response.ok) {
+          throw new Error(data.message || 'Помилка авторизації');
+        }
+        if (typeof data?.accessToken !== 'string' || typeof data?.refreshToken !== 'string') {
+          throw new Error('Сервер не повернув токени авторизації');
+        }
+
+        await saveTokens(data.accessToken, data.refreshToken);
         await saveSession(phoneNumber);
         await updatePresence(phoneNumber, true);
         router.replace({ pathname: '/(tabs)/profile', params: { phoneNumber } });

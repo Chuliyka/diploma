@@ -1,10 +1,14 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { NotificationType } from '../../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsGateway } from './notifications.gateway';
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsGateway: NotificationsGateway,
+  ) {}
 
   async findMine(userId: number) {
     const notifications = await this.prisma.notification.findMany({
@@ -69,7 +73,36 @@ export class NotificationsService {
       include: this.notificationInclude(),
     });
 
-    return this.toResponse(notification);
+    const response = this.toResponse(notification);
+    this.notificationsGateway.emitNotificationToUser(params.recipientId, response);
+    return response;
+  }
+
+  async createFriendRequestAcceptedNotification(params: {
+    recipientId: number;
+    actorId: number;
+    friendshipId: number;
+    actorName?: string | null;
+  }) {
+    const actorName = params.actorName?.trim() || 'Користувач';
+    const notification = await this.prisma.notification.create({
+      data: {
+        recipientId: params.recipientId,
+        actorId: params.actorId,
+        type: NotificationType.FRIEND_REQUEST_ACCEPTED,
+        title: `${actorName} прийняв(ла) вашу заявку в друзі`,
+        body: 'Тепер ви друзі і можете написати повідомлення.',
+        metadata: {
+          friendshipId: params.friendshipId,
+          accepterId: params.actorId,
+        },
+      },
+      include: this.notificationInclude(),
+    });
+
+    const response = this.toResponse(notification);
+    this.notificationsGateway.emitNotificationToUser(params.recipientId, response);
+    return response;
   }
 
   private notificationInclude() {

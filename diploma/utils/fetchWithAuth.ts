@@ -47,6 +47,10 @@ export async function fetchWithAuth(
     const newToken = await tryRefresh();
     if (newToken) {
       response = await makeRequest(newToken);
+    } else {
+      console.warn('[fetchWithAuth] Unauthorized and no valid refresh token — clearing session');
+      await clearSession();
+      router.replace('/');
     }
   }
 

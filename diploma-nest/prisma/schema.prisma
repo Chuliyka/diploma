@@ -57,6 +57,7 @@ enum FriendshipStatus {
 
 enum NotificationType {
   FRIEND_REQUEST
+  FRIEND_REQUEST_ACCEPTED
 }
 
 model Notification {
