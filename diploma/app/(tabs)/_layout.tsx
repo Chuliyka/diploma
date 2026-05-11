@@ -2,10 +2,7 @@ import { Tabs, useSegments } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { StyleSheet, useColorScheme, View } from 'react-native';
-
-const ACTIVE = '#C88CEB';
-const INACTIVE_LIGHT = '#D8BEEB';
-const INACTIVE_DARK = '#F3E9FF';
+import { AppColors } from '@/constants/app-colors';
 
 function CircleIcon({
   focused,
@@ -39,8 +36,8 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        tabBarActiveTintColor: ACTIVE,
-        tabBarInactiveTintColor: darkTabChrome ? INACTIVE_DARK : INACTIVE_LIGHT,
+        tabBarActiveTintColor: AppColors.tabBarActive,
+        tabBarInactiveTintColor: darkTabChrome ? AppColors.tabBarInactiveDarkMap : AppColors.tabBarInactiveLight,
         tabBarStyle: {
           position: 'absolute',
           left: 0,
@@ -105,7 +102,7 @@ export default function TabsLayout() {
         options={{
           tabBarIcon: ({ color, focused }) => (
             <CircleIcon focused={focused} isDark={darkTabChrome}>
-              <Ionicons name="options-outline" size={24} color={focused ? '#FFFFFF' : color} />
+              <Ionicons name={focused ? 'settings' : 'settings-outline'} size={24} color={focused ? '#FFFFFF' : color} />
             </CircleIcon>
           ),
         }}
@@ -133,8 +130,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(200, 140, 235, 0.42)',
   },
   circleActive: {
-    backgroundColor: ACTIVE,
+    backgroundColor: AppColors.tabBarActive,
     borderWidth: 1,
-    borderColor: ACTIVE,
+    borderColor: AppColors.tabBarActive,
   },
 });

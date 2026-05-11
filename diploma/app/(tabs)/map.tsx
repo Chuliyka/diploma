@@ -1,9 +1,25 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  View,
+} from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BASE_URL } from '@/constants/api';
+import { AppColors } from '@/constants/app-colors';
+import {
+  MapSortFilterBottomSheet,
+  type MapSortFilterKey,
+} from '@/components/map/MapSortFilterBottomSheet';
 import { MapUserProfileBottomSheet } from '@/components/map/MapUserProfileBottomSheet';
 import type { MapUserFriendRequestStatus } from '@/types/map-user-profile-sheet';
 import { fetchWithAuth } from '@/utils/fetchWithAuth';
@@ -145,6 +161,7 @@ function mergeBackendUserIntoMarker(marker: OnlineUserMarker, user: any): Online
 export default function MapTabScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
+  const mapTopFabIconColor = isDark ? AppColors.tabBarInactiveDarkMap : AppColors.tabBarInactiveLight;
   const insets = useSafeAreaInsets();
   const { phoneNumber } = useLocalSearchParams<{ phoneNumber?: string }>();
   const mapRef = useRef<MapView | null>(null);
@@ -157,6 +174,8 @@ export default function MapTabScreen() {
   const [regionDelta, setRegionDelta] = useState(0.02);
   const [selectedUser, setSelectedUser] = useState<OnlineUserMarker | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [sortFilterSheetVisible, setSortFilterSheetVisible] = useState(false);
+  const [mapSortFilterKey, setMapSortFilterKey] = useState<MapSortFilterKey>('all');
   const [addingFriend, setAddingFriend] = useState(false);
 
   useEffect(() => {
@@ -500,10 +519,26 @@ export default function MapTabScreen() {
     });
   }, [closeSheet, selectedUser]);
 
+  const openSortFilterSheet = useCallback(() => {
+    setSheetVisible(false);
+    setSelectedUser(null);
+    setSortFilterSheetVisible(true);
+  }, []);
+
+  const closeSortFilterSheet = useCallback(() => {
+    setSortFilterSheetVisible(false);
+  }, []);
+
+  const onPressMapNotifications = useCallback(() => {
+    router.push('/notifications');
+  }, []);
+
   const handleMarkerPress = useCallback(
     (marker: OnlineUserMarker) => {
       if (marker.id === -1) return;
       if (marker.id === userMapData?.id) return;
+
+      setSortFilterSheetVisible(false);
 
       console.log('[Map] User marker pressed:', {
         marker,
@@ -579,8 +614,35 @@ export default function MapTabScreen() {
         })}
       </MapView>
 
+      <View style={[styles.mapTopBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
+        <Pressable
+          onPress={openSortFilterSheet}
+          style={({ pressed }) => [
+            styles.mapTopFab,
+            isDark && styles.mapTopFabDark,
+            pressed && styles.mapTopFabPressed,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Сортування за статусами та інтересами"
+        >
+          <Ionicons name="options-outline" size={24} color={mapTopFabIconColor} />
+        </Pressable>
+        <Pressable
+          onPress={onPressMapNotifications}
+          style={({ pressed }) => [
+            styles.mapTopFab,
+            isDark && styles.mapTopFabDark,
+            pressed && styles.mapTopFabPressed,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Сповіщення"
+        >
+          <Ionicons name="notifications-outline" size={24} color={mapTopFabIconColor} />
+        </Pressable>
+      </View>
+
       {!!errorText && !loading && (
-        <View style={[styles.floatingInfo, { top: insets.top + 12 }]}>
+        <View style={[styles.floatingInfo, { top: insets.top + 64 }]}>
           <Text style={styles.floatingInfoText}>{errorText}</Text>
         </View>
       )}
@@ -601,6 +663,14 @@ export default function MapTabScreen() {
         onPressSendLocation={onPressSendLocation}
         addingFriend={addingFriend}
       />
+
+      <MapSortFilterBottomSheet
+        visible={sortFilterSheetVisible}
+        onClose={closeSortFilterSheet}
+        bottomInset={insets.bottom}
+        selectedKey={mapSortFilterKey}
+        onSelectKey={setMapSortFilterKey}
+      />
     </View>
   );
 }
@@ -615,6 +685,36 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  mapTopBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    zIndex: 40,
+  },
+  mapTopFab: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.86)',
+    borderWidth: 1,
+    borderColor: '#E7D2F4',
+  },
+  mapTopFabDark: {
+    backgroundColor: 'rgba(38, 38, 42, 0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(200, 140, 235, 0.42)',
+  },
+  mapTopFabPressed: {
+    opacity: 0.88,
   },
   floatingInfo: {
     position: 'absolute',

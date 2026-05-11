@@ -1,7 +1,8 @@
 import { AppButton } from '@/components/ui/app-button';
 import { AppColors } from '@/constants/app-colors';
 import type { MapUserProfileSheetDto } from '@/types/map-user-profile-sheet';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { LayoutChangeEvent } from 'react-native';
 import {
   Image,
   Modal,
@@ -51,26 +52,50 @@ export function MapUserProfileBottomSheet({
   addingFriend = false,
 }: MapUserProfileBottomSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
-  const maxSheetHeight = Math.round(windowHeight * 0.88);
-  const [contentHeight, setContentHeight] = useState(0);
+  const sheetHeight = Math.round(windowHeight * 0.7);
+  const [contentScrollable, setContentScrollable] = useState(false);
+  const scrollContentHeightRef = useRef(0);
+  const scrollViewportHeightRef = useRef(0);
+
+  const updateContentScrollable = useCallback(() => {
+    const { current: ch } = scrollContentHeightRef;
+    const { current: vh } = scrollViewportHeightRef;
+    if (vh <= 0 || ch <= 0) {
+      setContentScrollable(false);
+      return;
+    }
+    setContentScrollable(ch > vh + 2);
+  }, []);
+
+  const onScrollViewportLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      scrollViewportHeightRef.current = Math.round(e.nativeEvent.layout.height);
+      updateContentScrollable();
+    },
+    [updateContentScrollable],
+  );
 
   const onSheetContentSizeChange = useCallback(
     (_w: number, h: number) => {
       if (h <= 0) return;
-      setContentHeight((prev) => (Math.abs(prev - h) < 1 ? prev : h));
+      scrollContentHeightRef.current = h;
+      updateContentScrollable();
     },
-    [],
+    [updateContentScrollable],
   );
 
-  const scrollHeight =
-    contentHeight > 0 ? Math.min(contentHeight, maxSheetHeight) : undefined;
-
   useEffect(() => {
-    if (!visible) setContentHeight(0);
+    if (!visible) {
+      scrollContentHeightRef.current = 0;
+      scrollViewportHeightRef.current = 0;
+      setContentScrollable(false);
+    }
   }, [visible]);
 
   useEffect(() => {
-    setContentHeight(0);
+    scrollContentHeightRef.current = 0;
+    scrollViewportHeightRef.current = 0;
+    setContentScrollable(false);
   }, [profile?.id]);
 
   return (
@@ -78,7 +103,7 @@ export function MapUserProfileBottomSheet({
       <View style={styles.modalRoot}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" />
 
-        <View style={[styles.sheetShell, { maxHeight: maxSheetHeight }]}>
+        <View style={[styles.sheetShell, { height: sheetHeight }]}>
           {profile ? (
             <>
               <View style={styles.avatarFloatingSlot} pointerEvents="box-none">
@@ -97,117 +122,126 @@ export function MapUserProfileBottomSheet({
                 </View>
               </View>
 
-              <ScrollView
-                style={[
-                  styles.sheetScrollCard,
-                  { maxHeight: maxSheetHeight },
-                  ...(scrollHeight != null ? [{ height: scrollHeight }] : []),
-                ]}
-                contentContainerStyle={[
-                  styles.scrollContent,
-                  {
-                    paddingBottom: bottomInset + 18,
-                    paddingHorizontal: 20,
-                  },
-                ]}
-                onContentSizeChange={onSheetContentSizeChange}
-                showsVerticalScrollIndicator={contentHeight > maxSheetHeight}
-                bounces={false}
-                alwaysBounceVertical={false}
-                overScrollMode="never"
-                keyboardShouldPersistTaps="handled"
-              >
-                <View style={styles.handle} />
+              <View style={[styles.sheetBodyColumn, { height: sheetHeight }]}>
+                <ScrollView
+                  style={styles.sheetScrollArea}
+                  contentContainerStyle={[
+                    styles.scrollContent,
+                    {
+                      paddingBottom: 16,
+                      paddingHorizontal: 20,
+                    },
+                  ]}
+                  onLayout={onScrollViewportLayout}
+                  onContentSizeChange={onSheetContentSizeChange}
+                  showsVerticalScrollIndicator={contentScrollable}
+                  bounces={false}
+                  alwaysBounceVertical={false}
+                  overScrollMode="never"
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <View style={styles.handle} />
 
-                <View style={styles.topBlock} pointerEvents="box-none">
-                  <View style={styles.ratingBlock}>
-                    <Text style={styles.star}>★</Text>
-                    <Text style={styles.ratingValue}>{formatRatingUk(profile.rating)}</Text>
-                  </View>
-                  <View style={styles.avatarScrollSpacer} />
-                </View>
-
-                <Text style={styles.statusLine} numberOfLines={2}>
-                  {`${profile.statusEmoji?.trim() || ''} ${profile.statusLine}`.trim()}
-                </Text>
-
-                <Text style={styles.name}>
-                  {profile.displayName}
-                  {profile.age !== null ? `, ${profile.age}` : ''}
-                </Text>
-
-                <View style={styles.badgesRow}>
-                  {shouldShowRelationshipPill(profile) ? (
-                    <View style={styles.friendPill}>
-                      <Text style={styles.friendPillText}>{profile.relationshipLabel}</Text>
+                  <View style={styles.topBlock} pointerEvents="box-none">
+                    <View style={styles.ratingBlock}>
+                      <Text style={styles.star}>★</Text>
+                      <Text style={styles.ratingValue}>{formatRatingUk(profile.rating)}</Text>
                     </View>
-                  ) : null}
-                  <View style={[styles.timePill, profile.isOnline && styles.onlinePill]}>
-                    <Text style={styles.timePillText}>{profile.lastSeenLabel}</Text>
+                    <View style={styles.avatarScrollSpacer} />
                   </View>
-                </View>
 
-              <View style={styles.statsRow}>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{profile.meetsCount}</Text>
-                  <Text style={styles.statLabel}>зустрічі</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{profile.friendsCount}</Text>
-                  <Text style={styles.statLabel}>друг</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{profile.interests.length}</Text>
-                  <Text style={styles.statLabel}>інтереси</Text>
-                </View>
-              </View>
+                  <Text style={styles.statusLine} numberOfLines={2}>
+                    {`${profile.statusEmoji?.trim() || ''} ${profile.statusLine}`.trim()}
+                  </Text>
 
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Про себе</Text>
-                <Text style={styles.sectionBody}>{profile.about}</Text>
-              </View>
+                  <Text style={styles.name}>
+                    {profile.displayName}
+                    {profile.age !== null ? `, ${profile.age}` : ''}
+                  </Text>
 
-              <View style={styles.divider} />
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Інтереси</Text>
-                {profile.interests.length > 0 ? (
-                  <View style={styles.tagsRow}>
-                    {profile.interests.map((interest) => (
-                      <View style={styles.tag} key={interest.id}>
-                        <Text style={styles.tagText}>{interest.name}</Text>
+                  <View style={styles.badgesRow}>
+                    {shouldShowRelationshipPill(profile) ? (
+                      <View style={styles.friendPill}>
+                        <Text style={styles.friendPillText}>{profile.relationshipLabel}</Text>
                       </View>
-                    ))}
+                    ) : null}
+                    <View style={[styles.timePill, profile.isOnline && styles.onlinePill]}>
+                      <Text style={styles.timePillText}>{profile.lastSeenLabel}</Text>
+                    </View>
                   </View>
-                ) : (
-                  <Text style={styles.interestsEmpty}>Ще немає інтересів</Text>
-                )}
-              </View>
 
-              <View style={styles.actionsRow}>
-                <View style={styles.actionBtnWrap}>
-                  <AppButton
-                    variant="outline"
-                    shape="pill"
-                    title={getFriendActionTitle(profile)}
-                    onPress={profile.isFriend ? onPressMessage : onPressAddFriend}
-                    disabled={!profile.isFriend && profile.friendRequestStatus !== 'none'}
-                    loading={!profile.isFriend && addingFriend}
-                  />
-                </View>
-                <View style={styles.actionBtnWrapLast}>
-                  <AppButton
-                    variant="primary"
-                    shape="pill"
-                    title="Надіслати локацію"
-                    onPress={onPressSendLocation}
-                    style={{ backgroundColor: AppColors.mapSheetSendLocationButton }}
-                  />
+                  <View style={styles.statsRow}>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{profile.meetsCount}</Text>
+                      <Text style={styles.statLabel}>зустрічі</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{profile.friendsCount}</Text>
+                      <Text style={styles.statLabel}>друг</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{profile.interests.length}</Text>
+                      <Text style={styles.statLabel}>інтереси</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Про себе</Text>
+                    <Text style={styles.sectionBody}>{profile.about}</Text>
+                  </View>
+
+                  <View style={styles.divider} />
+
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Інтереси</Text>
+                    {profile.interests.length > 0 ? (
+                      <View style={styles.tagsRow}>
+                        {profile.interests.map((interest) => (
+                          <View style={styles.tag} key={interest.id}>
+                            <Text style={styles.tagText}>{interest.name}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      <Text style={styles.interestsEmpty}>Ще немає інтересів</Text>
+                    )}
+                  </View>
+                </ScrollView>
+
+                <View
+                  style={[
+                    styles.actionsFooter,
+                    {
+                      paddingBottom: bottomInset,
+                      paddingHorizontal: 20,
+                    },
+                  ]}
+                >
+                  <View style={styles.actionsRow}>
+                    <View style={styles.actionBtnWrap}>
+                      <AppButton
+                        variant="outline"
+                        shape="pill"
+                        title={getFriendActionTitle(profile)}
+                        onPress={profile.isFriend ? onPressMessage : onPressAddFriend}
+                        disabled={!profile.isFriend && profile.friendRequestStatus !== 'none'}
+                        loading={!profile.isFriend && addingFriend}
+                      />
+                    </View>
+                    <View style={styles.actionBtnWrapLast}>
+                      <AppButton
+                        variant="primary"
+                        shape="pill"
+                        title="Надіслати локацію"
+                        onPress={onPressSendLocation}
+                        style={{ backgroundColor: AppColors.mapSheetSendLocationButton }}
+                      />
+                    </View>
+                  </View>
                 </View>
               </View>
-            </ScrollView>
             </>
           ) : null}
         </View>
@@ -236,13 +270,24 @@ const styles = StyleSheet.create({
     elevation: 12,
     alignItems: 'center',
   },
-  sheetScrollCard: {
-    flexGrow: 0,
+  sheetBodyColumn: {
     alignSelf: 'stretch',
+    flexDirection: 'column',
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     overflow: 'hidden',
+  },
+  sheetScrollArea: {
+    flex: 1,
+    minHeight: 0,
+    alignSelf: 'stretch',
+  },
+  actionsFooter: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E4E9F0',
+    backgroundColor: '#FFFFFF',
+    paddingTop: 12,
   },
   handle: {
     alignSelf: 'center',
@@ -258,11 +303,11 @@ const styles = StyleSheet.create({
   },
   topBlock: {
     position: 'relative',
-    minHeight: 42,
+    minHeight: 30,
     marginBottom: 4,
   },
   avatarScrollSpacer: {
-    height: 56,
+    height: 6,
   },
   ratingBlock: {
     position: 'absolute',
@@ -336,7 +381,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   name: {
-    marginTop: 10,
     fontFamily: 'Space Grotesk',
     fontSize: 26,
     fontWeight: '700',
@@ -454,8 +498,6 @@ const styles = StyleSheet.create({
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 22,
-    marginBottom: 10,
   },
   actionBtnWrap: {
     flex: 1,

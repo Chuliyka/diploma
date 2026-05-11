@@ -1,4 +1,7 @@
 export const AppColors = {
+  tabBarActive: '#C88CEB',
+  tabBarInactiveLight: '#D8BEEB',
+  tabBarInactiveDarkMap: '#F3E9FF',
   primary: '#9D8DF1',
   mapSheetSendLocationButton: '#C4B5F7',
   navy: '#19395A',
