@@ -1,5 +1,6 @@
 export const AppColors = {
   primary: '#9D8DF1',
+  mapSheetSendLocationButton: '#C4B5F7',
   navy: '#19395A',
   textBody: '#25496E',
   muted: '#6A8298',

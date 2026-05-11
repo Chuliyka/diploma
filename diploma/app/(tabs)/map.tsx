@@ -1,10 +1,12 @@
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BASE_URL } from '@/constants/api';
+import { MapUserProfileBottomSheet } from '@/components/map/MapUserProfileBottomSheet';
 import { fetchWithAuth } from '@/utils/fetchWithAuth';
+import { buildMapUserProfileSheetFromMarker } from '@/utils/mapUserProfileSheet';
 import { getSession } from '@/utils/session';
 
 type UserMapData = {
@@ -20,6 +22,15 @@ type OnlineUserMarker = {
   longitude: number;
   photoUrl: string | null;
   name: string | null;
+  birthDate?: string | null;
+  about?: string | null;
+  statusEmoji?: string | null;
+  statusBody?: string | null;
+  rating?: number | null;
+  meetsCount?: number;
+  friendsCount?: number;
+  interests?: { interest: { id: number; name: string } }[];
+  statusRelativeLabel?: string | null;
 };
 
 export default function MapTabScreen() {
@@ -35,6 +46,8 @@ export default function MapTabScreen() {
   const [fallbackCoords, setFallbackCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [errorText, setErrorText] = useState('');
   const [regionDelta, setRegionDelta] = useState(0.02);
+  const [selectedUser, setSelectedUser] = useState<OnlineUserMarker | null>(null);
+  const [sheetVisible, setSheetVisible] = useState(false);
 
   useEffect(() => {
     if (phoneNumber) {
@@ -157,6 +170,16 @@ export default function MapTabScreen() {
             longitude,
             photoUrl: typeof item?.photoUrl === 'string' ? item.photoUrl : null,
             name: typeof item?.name === 'string' ? item.name : null,
+            birthDate: typeof item?.birthDate === 'string' ? item.birthDate : null,
+            about: typeof item?.about === 'string' ? item.about : null,
+            statusEmoji: typeof item?.statusEmoji === 'string' ? item.statusEmoji : null,
+            statusBody: typeof item?.statusBody === 'string' ? item.statusBody : null,
+            rating: Number.isFinite(Number(item?.rating)) ? Number(item.rating) : null,
+            meetsCount: Number.isFinite(Number(item?.meetsCount)) ? Number(item.meetsCount) : undefined,
+            friendsCount: Number.isFinite(Number(item?.friendsCount)) ? Number(item.friendsCount) : undefined,
+            interests: Array.isArray(item?.interests) ? item.interests : undefined,
+            statusRelativeLabel:
+              typeof item?.statusRelativeLabel === 'string' ? item.statusRelativeLabel : null,
           } as OnlineUserMarker;
         })
         .filter((item: OnlineUserMarker | null): item is OnlineUserMarker => Boolean(item));
@@ -213,7 +236,6 @@ export default function MapTabScreen() {
       };
     }
 
-    // Fallback center: Kyiv
     return {
       latitude: 50.4501,
       longitude: 30.5234,
@@ -242,6 +264,38 @@ export default function MapTabScreen() {
     setRegionDelta(region.latitudeDelta);
   };
 
+  const closeSheet = useCallback(() => {
+    setSheetVisible(false);
+    setSelectedUser(null);
+  }, []);
+
+  const sheetProfile = useMemo(() => {
+    if (!selectedUser) return null;
+    return buildMapUserProfileSheetFromMarker(selectedUser, BASE_URL);
+  }, [selectedUser]);
+
+  const onPressChat = useCallback(() => {
+    if (!selectedUser) return;
+    closeSheet();
+
+    // TODO: замінити conversationId на реальний з інтеграції чату
+    router.push({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId: String(selectedUser.id) },
+    });
+  }, [closeSheet, selectedUser]);
+
+  const onPressSendLocation = useCallback(() => {
+    if (!selectedUser) return;
+    closeSheet();
+
+    // TODO: інтеграція надсилання локації з мапи в тред чату
+    router.push({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId: String(selectedUser.id), action: 'send_location' },
+    });
+  }, [closeSheet, selectedUser]);
+
   return (
     <View style={[styles.container, isDark && styles.containerDark]}>
       <MapView
@@ -259,9 +313,14 @@ export default function MapTabScreen() {
           <Marker
             key={`user-marker-${marker.id}-${showDotMarker ? 'dot' : 'avatar'}`}
             coordinate={{ latitude: marker.latitude, longitude: marker.longitude }}
-            title={marker.id === userMapData?.id || marker.id === -1 ? 'Ви тут' : marker.name ?? 'Користувач онлайн'}
-            description="Онлайн"
             tracksViewChanges
+            onPress={() => {
+              // Відкриваємо bottom-sheet тільки для інших користувачів
+              if (marker.id === -1) return;
+              if (marker.id === userMapData?.id) return;
+              setSelectedUser(marker);
+              setSheetVisible(true);
+            }}
           >
             {showDotMarker ? (
               <View style={styles.dotWrap}>
@@ -296,6 +355,15 @@ export default function MapTabScreen() {
           <ActivityIndicator size="large" color="#C88CEB" />
         </View>
       )}
+
+      <MapUserProfileBottomSheet
+        visible={sheetVisible}
+        onClose={closeSheet}
+        profile={sheetProfile}
+        bottomInset={insets.bottom}
+        onPressMessage={onPressChat}
+        onPressSendLocation={onPressSendLocation}
+      />
     </View>
   );
 }
