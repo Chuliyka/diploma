@@ -1,8 +1,21 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { UPLOADS_DIR } from '../paths';
+import { existsSync } from 'fs';
+import { extname, join } from 'path';
+import { ensureUploadsDir, UPLOADS_DIR } from '../paths';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { SaveInterestsDto } from './dto/save-interests.dto';
@@ -75,20 +88,44 @@ export class UsersController {
   @UseInterceptors(
     FileInterceptor('photo', {
       storage: diskStorage({
-        destination: UPLOADS_DIR,
+        destination: (_req, _file, cb) => {
+          ensureUploadsDir();
+          cb(null, UPLOADS_DIR);
+        },
         filename: (_req, file, cb) => {
           const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          cb(null, unique + extname(file.originalname));
+          const ext = extname(file.originalname || '') || (file.mimetype === 'image/png' ? '.png' : '.jpg');
+          cb(null, unique + ext);
         },
       }),
       limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
     }),
   )
-  uploadPhoto(
+  async uploadPhoto(
     @Query('phoneNumber') phoneNumber: string,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: Express.Multer.File | undefined,
   ) {
-    console.log(`[UsersController] POST by-phone/photo — phone: ${phoneNumber} | originalname: ${file.originalname} | saved as: ${file.filename} | size: ${file.size} bytes | mimetype: ${file.mimetype}`);
-    return this.usersService.uploadPhoto(phoneNumber, file.filename);
+    if (!phoneNumber?.trim()) {
+      throw new BadRequestException('phoneNumber query parameter is required.');
+    }
+
+    if (!file) {
+      throw new BadRequestException('Photo file is missing. Send multipart field "photo".');
+    }
+
+    if (!file.size) {
+      throw new BadRequestException('Uploaded photo file is empty.');
+    }
+
+    const savedPath = join(UPLOADS_DIR, file.filename);
+    if (!existsSync(savedPath)) {
+      throw new BadRequestException(`Photo was not saved to disk: ${savedPath}`);
+    }
+
+    console.log(
+      `[UsersController] POST by-phone/photo — key: ${phoneNumber} | dir: ${UPLOADS_DIR} | file: ${file.filename} | size: ${file.size} bytes | path: ${savedPath}`,
+    );
+
+    return this.usersService.uploadPhoto(phoneNumber.trim(), file.filename);
   }
 }

@@ -21,6 +21,7 @@ if (dotenvResult.error) {
 
 async function bootstrap() {
   ensureUploadsDir();
+  console.log('[Server] Uploads directory:', UPLOADS_DIR);
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.useStaticAssets(UPLOADS_DIR, { prefix: '/uploads' });
   await app.listen(process.env.PORT ?? 3000);

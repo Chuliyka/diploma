@@ -6,6 +6,8 @@ import { useLocalSearchParams } from 'expo-router';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { BASE_URL } from '@/constants/api';
 import { fetchWithAuth } from '@/utils/fetchWithAuth';
+import { getSession } from '@/utils/session';
+import { uploadProfilePhoto } from '@/utils/uploadProfilePhoto';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -55,11 +57,13 @@ type ProfileScreenProps = {
 const DEFAULT_SCROLL_BOTTOM_INSET = 40;
 
 export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps) {
-  const { phoneNumber } = useLocalSearchParams<{ phoneNumber: string }>();
+  const { phoneNumber: phoneNumberParam } = useLocalSearchParams<{ phoneNumber?: string }>();
+  const [sessionKey, setSessionKey] = useState<string | null>(phoneNumberParam ?? null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoCacheKey, setPhotoCacheKey] = useState(0);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -70,11 +74,24 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
   const [editBirthDate, setEditBirthDate] = useState<Date | null>(null);
   const [showBirthDatePicker, setShowBirthDatePicker] = useState(false);
 
+  const profileKey = sessionKey ?? user?.phoneNumber ?? phoneNumberParam ?? null;
+
+  useEffect(() => {
+    if (phoneNumberParam) {
+      setSessionKey(phoneNumberParam);
+      return;
+    }
+
+    getSession()
+      .then((stored) => setSessionKey(stored))
+      .catch(() => setSessionKey(null));
+  }, [phoneNumberParam]);
+
   const fetchUser = useCallback(async (silent = false) => {
-    if (!phoneNumber) return;
+    if (!profileKey) return;
     if (!silent) setLoading(true);
     try {
-      const r = await fetchWithAuth(`${BASE_URL}/users/by-phone?phoneNumber=${encodeURIComponent(phoneNumber)}`);
+      const r = await fetchWithAuth(`${BASE_URL}/users/by-phone?phoneNumber=${encodeURIComponent(profileKey)}`);
       const data = await r.json();
       console.log('[Profile] User data:', JSON.stringify(data, null, 2));
       setUser({ ...data, interests: data.interests ?? [] });
@@ -84,10 +101,10 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
       setLoading(false);
       setRefreshing(false);
     }
-  }, [phoneNumber]);
+  }, [profileKey]);
 
   const onRefresh = () => {
-    console.log('[Profile] Pull-to-refresh triggered — reloading user:', phoneNumber);
+    console.log('[Profile] Pull-to-refresh triggered — reloading user:', profileKey);
     setRefreshing(true);
     fetchUser(true);
   };
@@ -108,21 +125,21 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
     const asset = result.assets[0];
     console.log('[Profile] Selected photo — URI:', asset.uri, '| name:', asset.fileName, '| size:', asset.fileSize, 'bytes | type:', asset.mimeType);
     try {
+      if (!profileKey) {
+        Alert.alert('Помилка', 'Не вдалося визначити користувача для завантаження фото');
+        return;
+      }
+
       setPhotoUploading(true);
-      const formData = new FormData();
-      formData.append('photo', {
+      const updated = await uploadProfilePhoto({
+        phoneNumber: profileKey,
         uri: asset.uri,
-        type: asset.mimeType ?? 'image/jpeg',
-        name: asset.fileName ?? 'photo.jpg',
-      } as any);
-      const res = await fetchWithAuth(
-        `${BASE_URL}/users/by-phone/photo?phoneNumber=${encodeURIComponent(phoneNumber ?? '')}`,
-        { method: 'POST', body: formData },
-      );
-      if (!res.ok) throw new Error('Помилка завантаження');
-      const updated = await res.json();
-      console.log('[Profile] Photo uploaded successfully — server path:', updated.photoUrl, '| full URL:', `${BASE_URL}${updated.photoUrl}`);
-      setUser((prev) => prev ? { ...prev, photoUrl: updated.photoUrl } : prev);
+        mimeType: asset.mimeType,
+        fileName: asset.fileName,
+      });
+      console.log('[Profile] Photo uploaded — path:', updated.photoUrl, '| url:', `${BASE_URL}${updated.photoUrl}`);
+      setPhotoCacheKey(Date.now());
+      setUser((prev) => (prev ? { ...prev, photoUrl: updated.photoUrl } : prev));
     } catch (e: any) {
       Alert.alert('Помилка', e.message);
     } finally {
@@ -163,7 +180,7 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
   };
 
   const handleSaveProfile = async () => {
-    if (!phoneNumber) return;
+    if (!profileKey) return;
 
     try {
       setSavingProfile(true);
@@ -178,7 +195,7 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
       }
 
       const response = await fetchWithAuth(
-        `${BASE_URL}/users/by-phone?phoneNumber=${encodeURIComponent(phoneNumber)}`,
+        `${BASE_URL}/users/by-phone?phoneNumber=${encodeURIComponent(profileKey)}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -201,12 +218,12 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
   };
 
   const handleSelectStatus = async (status: string) => {
-    if (!phoneNumber) return;
+    if (!profileKey) return;
 
     try {
       setSavingStatus(true);
       const response = await fetchWithAuth(
-        `${BASE_URL}/users/by-phone?phoneNumber=${encodeURIComponent(phoneNumber)}`,
+        `${BASE_URL}/users/by-phone?phoneNumber=${encodeURIComponent(profileKey)}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -249,7 +266,9 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
   }
 
   const age = calcAge(user.birthDate);
-  const photoUri = user.photoUrl ? `${BASE_URL}${user.photoUrl}` : null;
+  const photoUri = user.photoUrl
+    ? `${BASE_URL}${user.photoUrl}${user.photoUrl.includes('?') ? '&' : '?'}v=${photoCacheKey}`
+    : null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -275,7 +294,7 @@ export default function ProfileScreen({ scrollBottomInset }: ProfileScreenProps)
                     <ActivityIndicator color="#9D8DF1" />
                   </View>
                 ) : photoUri ? (
-                  <Image source={{ uri: photoUri }} style={styles.avatarInner} />
+                  <Image key={photoUri} source={{ uri: photoUri }} style={styles.avatarInner} />
                 ) : (
                   <View style={[styles.avatarInner, styles.avatarPlaceholder]}>
                     <Text style={styles.avatarPlaceholderText}>

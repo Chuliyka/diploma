@@ -2,6 +2,27 @@ import { BASE_URL } from '../constants/api';
 import { clearSession, getAccessToken, getRefreshToken, saveTokens } from './session';
 import { router } from 'expo-router';
 
+const NGROK_SKIP_HEADER = 'ngrok-skip-browser-warning';
+
+function isFormDataBody(body: RequestInit['body']) {
+  return typeof FormData !== 'undefined' && body instanceof FormData;
+}
+
+function buildHeaders(init: RequestInit, token: string | null): HeadersInit {
+  if (isFormDataBody(init.body)) {
+    return {
+      [NGROK_SKIP_HEADER]: 'true',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  }
+
+  return {
+    [NGROK_SKIP_HEADER]: 'true',
+    ...(init.headers ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 async function tryRefresh(): Promise<string | null> {
   const refreshToken = await getRefreshToken();
   if (!refreshToken) return null;
@@ -9,7 +30,10 @@ async function tryRefresh(): Promise<string | null> {
   console.log('[fetchWithAuth] Access token expired — attempting refresh...');
   const res = await fetch(`${BASE_URL}/auth/refresh`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      [NGROK_SKIP_HEADER]: 'true',
+    },
     body: JSON.stringify({ refreshToken }),
   });
 
@@ -35,10 +59,7 @@ export async function fetchWithAuth(
   const makeRequest = (token: string | null) =>
     fetch(input, {
       ...init,
-      headers: {
-        ...(init.headers ?? {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: buildHeaders(init, token),
     });
 
   let response = await makeRequest(accessToken);

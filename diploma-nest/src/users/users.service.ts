@@ -163,22 +163,21 @@ export class UsersService {
     return { success: true, saved: interests.map((i) => i.name) };
   }
 
-  async uploadPhoto(phoneNumber: string, filename: string) {
-    this.assertPhoneNumber(phoneNumber);
-
-    const user = await this.prisma.user.findUnique({ where: { phoneNumber } });
-
-    if (!user) {
-      throw new NotFoundException(`User with phone ${phoneNumber} not found.`);
-    }
+  async uploadPhoto(sessionKey: string, filename: string) {
+    const user = await this.findUserByKey(sessionKey);
 
     const photoUrl = `/uploads/${filename}`;
-    console.log(`[UsersService] Photo uploaded — phone: ${phoneNumber} | file: ${filename} | saved path: ${photoUrl}`);
+    console.log(
+      `[UsersService] Photo uploaded — key: ${sessionKey} | userId: ${user.id} | file: ${filename} | url: ${photoUrl}`,
+    );
 
-    return this.prisma.user.update({
-      where: { phoneNumber },
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
       data: { photoUrl },
+      select: { photoUrl: true },
     });
+
+    return updated;
   }
 
   async updateByPhone(phoneNumber: string, data: UpdateUserDto) {

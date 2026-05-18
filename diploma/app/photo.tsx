@@ -1,7 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
-import { BASE_URL } from '../constants/api';
-import { fetchWithAuth } from '../utils/fetchWithAuth';
+import { uploadProfilePhoto } from '@/utils/uploadProfilePhoto';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -36,29 +35,25 @@ export default function PhotoScreen() {
       Alert.alert('Помилка', 'Обери фото перед продовженням');
       return;
     }
+
+    if (!phoneNumber) {
+      Alert.alert('Помилка', 'Не знайдено номер телефону');
+      return;
+    }
+
     try {
       setLoading(true);
-      console.log('[Photo] Uploading photo for phone:', phoneNumber);
-      const formData = new FormData();
-      const filename = photoUri.split('/').pop() ?? 'photo.jpg';
-      const match = /\.([a-zA-Z]+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : 'image/jpeg';
-      formData.append('photo', { uri: photoUri, name: filename, type } as any);
-
-      const response = await fetch(
-        `${BASE_URL}/users/by-phone/photo?phoneNumber=${encodeURIComponent(phoneNumber)}`,
-        { method: 'POST', body: formData },
-      );
-      const data = await response.json();
-      console.log('[Photo] Response status:', response.status, 'body:', data);
-      if (!response.ok) {
-        throw new Error(data.message || 'Помилка завантаження фото');
-      }
-      console.log('[Photo] Photo saved at:', data.photoUrl);
+      const asset = { uri: photoUri };
+      await uploadProfilePhoto({
+        phoneNumber,
+        uri: asset.uri,
+        useAuth: false,
+      });
       router.push({ pathname: './interests', params: { phoneNumber } });
-    } catch (e: any) {
-      console.error('[Photo] Error:', e.message);
-      Alert.alert('Помилка', e.message);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Помилка завантаження фото';
+      console.error('[Photo] Error:', message);
+      Alert.alert('Помилка', message);
     } finally {
       setLoading(false);
     }
