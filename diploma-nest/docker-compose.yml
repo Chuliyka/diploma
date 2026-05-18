@@ -1,7 +1,7 @@
 version: '3.9'
 
 services:
-  postgres:
+  postgres_db:
     image: postgres:16-alpine
     container_name: diploma-db
     restart: unless-stopped
@@ -13,6 +13,18 @@ services:
       - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  backend_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: diploma-api
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+      - '5555:5555'
+    depends_on:
+      - postgres_db
 
 volumes:
   postgres_data:
