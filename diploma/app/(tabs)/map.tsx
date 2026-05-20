@@ -22,6 +22,7 @@ import { MapUserProfileBottomSheet } from '@/components/map/MapUserProfileBottom
 import type { MapUserFriendRequestStatus } from '@/types/map-user-profile-sheet';
 import { fetchWithAuth } from '@/utils/fetchWithAuth';
 import { buildMapUserProfileSheetFromMarker } from '@/utils/mapUserProfileSheet';
+import { openChatWithParticipant } from '@/utils/openChat';
 import { getSession } from '@/utils/session';
 
 type UserMapData = {
@@ -433,10 +434,9 @@ export default function MapTabScreen() {
     if (!selectedUser) return;
     closeSheet();
 
-    // TODO: замінити conversationId на реальний з інтеграції чату
-    router.push({
-      pathname: '/chat/[conversationId]',
-      params: { conversationId: String(selectedUser.id) },
+    void openChatWithParticipant(Number(selectedUser.id)).catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : 'Не вдалося відкрити чат';
+      Alert.alert('Помилка', message);
     });
   }, [closeSheet, selectedUser]);
 
@@ -515,10 +515,9 @@ export default function MapTabScreen() {
     if (!selectedUser) return;
     closeSheet();
 
-    // TODO: інтеграція надсилання локації з мапи в тред чату
-    router.push({
-      pathname: '/chat/[conversationId]',
-      params: { conversationId: String(selectedUser.id), action: 'send_location' },
+    void openChatWithParticipant(Number(selectedUser.id)).catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : 'Не вдалося відкрити чат';
+      Alert.alert('Помилка', message);
     });
   }, [closeSheet, selectedUser]);
 

@@ -1,8 +1,27 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
+import { BASE_URL } from '@/constants/api';
+import type { ApiChatMessage } from '@/types/api-chat';
 import {
+  fetchConversationMessages,
+  findConversationById,
+  getOrCreateConversation,
+  markConversationRead,
+  sendChatMessage,
+} from '@/utils/chatApi';
+import {
+  mapApiMessageToDto,
+  mapConversationToThreadHeader,
+  mapMessagesToThreadEntries,
+} from '@/utils/chatMappers';
+import { getCurrentUserId } from '@/utils/currentUser';
+import { getAccessToken } from '@/utils/session';
+import {
+  ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -14,36 +33,159 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { createOptimisticOutgoingMessage, getMockChatThread } from '@/data/mock-chat-thread';
 import {
   isOutgoingMessage,
-  LOCAL_CHAT_PARTICIPANT_ID,
   type ChatMessageDto,
   type ChatThreadHeaderDto,
   type ChatThreadListEntry,
+  type ChatThreadPayload,
 } from '@/types/chat-thread';
+
+function createOptimisticOutgoingMessage(
+  conversationId: string,
+  authorParticipantId: string,
+  body: string,
+): ChatMessageDto {
+  return {
+    id: `local-${Date.now()}`,
+    conversationId,
+    authorParticipantId,
+    body,
+    createdAt: new Date().toISOString(),
+  };
+}
 
 const ACTIVE_RING = '#D9B5F5';
 const SCREEN_BG = '#F5EFFB';
 
 export default function ChatConversationScreen() {
   const insets = useSafeAreaInsets();
-  const rawId = useLocalSearchParams<{ conversationId: string }>().conversationId;
+  const params = useLocalSearchParams<{ conversationId?: string; participantId?: string }>();
+  const rawId = params.conversationId;
+  const rawParticipantId = params.participantId;
   const conversationId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
+  const participantIdParam = Array.isArray(rawParticipantId) ? rawParticipantId[0] : rawParticipantId;
 
-  const thread = useMemo(() => getMockChatThread(conversationId), [conversationId]);
+  const [thread, setThread] = useState<ChatThreadPayload | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
   const [extraEntries, setExtraEntries] = useState<ChatThreadListEntry[]>([]);
   const listRef = useRef<FlatList<ChatThreadListEntry>>(null);
+
+  const localAuthorId = currentUserId !== null ? String(currentUserId) : '';
 
   const entries = useMemo(() => {
     if (!thread) return [];
     return [...thread.entries, ...extraEntries];
   }, [thread, extraEntries]);
 
-  useEffect(() => {
+  const loadThread = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     setExtraEntries([]);
-  }, [conversationId]);
+
+    try {
+      const userId = await getCurrentUserId();
+      if (!userId) {
+        throw new Error('Увійдіть у акаунт');
+      }
+      setCurrentUserId(userId);
+
+      let resolvedConversationId = Number(conversationId);
+      if (!Number.isInteger(resolvedConversationId) || resolvedConversationId <= 0) {
+        const participantId = Number(participantIdParam);
+        if (!Number.isInteger(participantId) || participantId <= 0) {
+          throw new Error('Невірний ідентифікатор чату');
+        }
+        const created = await getOrCreateConversation(participantId);
+        resolvedConversationId = created.id;
+      }
+
+      const [conversation, messages] = await Promise.all([
+        findConversationById(resolvedConversationId),
+        fetchConversationMessages(resolvedConversationId),
+      ]);
+
+      if (!conversation) {
+        throw new Error('Діалог не знайдено');
+      }
+
+      const header = mapConversationToThreadHeader(conversation, userId);
+      if (!header) {
+        throw new Error('Не вдалося завантажити учасників чату');
+      }
+
+      setThread({
+        header,
+        entries: mapMessagesToThreadEntries(messages, userId),
+      });
+
+      await markConversationRead(resolvedConversationId);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Не вдалося завантажити чат';
+      setLoadError(message);
+      setThread(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [conversationId, participantIdParam]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadThread();
+    }, [loadThread]),
+  );
+
+  useEffect(() => {
+    const numericId = Number(thread?.header.conversationId ?? conversationId);
+    if (!Number.isInteger(numericId) || numericId <= 0) return;
+
+    let socket: Socket | null = null;
+    let disposed = false;
+
+    const connect = async () => {
+      if (disposed) return;
+      const token = await getAccessToken();
+      if (!token) return;
+
+      socket = io(`${BASE_URL}/chat`, {
+        transports: ['websocket'],
+        auth: { token },
+      });
+
+      socket.on('connect', () => {
+        socket?.emit('conversation:join', { conversationId: numericId });
+      });
+
+      socket.on('message:new', (payload: ApiChatMessage) => {
+        if (payload.conversationId !== numericId) return;
+        void getCurrentUserId().then((userId) => {
+          if (!userId) return;
+          const dto = mapApiMessageToDto(payload, userId);
+          setExtraEntries((prev) => {
+            if (prev.some((e) => e.kind === 'message' && e.message.id === dto.id)) return prev;
+            if (thread?.entries.some((e) => e.kind === 'message' && e.message.id === dto.id)) {
+              return prev;
+            }
+            return [...prev, { kind: 'message', message: dto }];
+          });
+          if (payload.senderId !== userId) {
+            void markConversationRead(numericId);
+          }
+        });
+      });
+    };
+
+    void connect();
+
+    return () => {
+      disposed = true;
+      socket?.disconnect();
+    };
+  }, [thread?.header.conversationId, conversationId]);
 
   const handleBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -56,29 +198,64 @@ export default function ChatConversationScreen() {
   const onSendLocationPress = useCallback(() => {
   }, []);
 
-  const appendOutgoing = useCallback(
-    (body: string) => {
-      if (!thread || !body.trim()) return;
-      const message = createOptimisticOutgoingMessage(thread.header.conversationId, body.trim());
-      setExtraEntries((prev) => [...prev, { kind: 'message', message }]);
-      setDraft('');
-      requestAnimationFrame(() => {
-        listRef.current?.scrollToEnd({ animated: true });
-      });
-    },
-    [thread],
-  );
+  const onSubmitDraft = useCallback(async () => {
+    if (!thread || !draft.trim() || sending) return;
 
-  const onSubmitDraft = useCallback(() => {
-    appendOutgoing(draft);
-  }, [appendOutgoing, draft]);
+    const text = draft.trim();
+    const conversationNumericId = Number(thread.header.conversationId);
+    if (!Number.isInteger(conversationNumericId)) return;
+
+    const optimistic = createOptimisticOutgoingMessage(
+      thread.header.conversationId,
+      localAuthorId,
+      text,
+    );
+    setExtraEntries((prev) => [...prev, { kind: 'message', message: optimistic }]);
+    setDraft('');
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated: true });
+    });
+    setSending(true);
+
+    try {
+      const saved = await sendChatMessage({ conversationId: conversationNumericId, text });
+      const userId = currentUserId ?? (await getCurrentUserId());
+      if (!userId) return;
+
+      const dto = mapApiMessageToDto(saved, userId);
+      setExtraEntries((prev) =>
+        prev.map((entry) =>
+          entry.kind === 'message' && entry.message.id === optimistic.id
+            ? { kind: 'message', message: dto }
+            : entry,
+        ),
+      );
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Не вдалося надіслати повідомлення';
+      Alert.alert('Помилка', message);
+      setExtraEntries((prev) =>
+        prev.filter((entry) => !(entry.kind === 'message' && entry.message.id === optimistic.id)),
+      );
+      setDraft(text);
+    } finally {
+      setSending(false);
+    }
+  }, [conversationId, currentUserId, draft, localAuthorId, sending, thread]);
 
   const isDraftEmpty = draft.trim().length === 0;
+
+  if (loading) {
+    return (
+      <View style={[styles.notFoundRoot, { paddingTop: insets.top + 24 }]}>
+        <ActivityIndicator size="large" color="#9D8DF1" />
+      </View>
+    );
+  }
 
   if (!thread) {
     return (
       <View style={[styles.notFoundRoot, { paddingTop: insets.top + 24 }]}>
-        <Text style={styles.notFoundTitle}>Чат не знайдено</Text>
+        <Text style={styles.notFoundTitle}>{loadError ?? 'Чат не знайдено'}</Text>
         <Pressable onPress={handleBack} style={styles.notFoundBtn}>
           <Text style={styles.notFoundBtnText}>Назад до списку</Text>
         </Pressable>
@@ -109,7 +286,9 @@ export default function ChatConversationScreen() {
           ref={listRef}
           data={entries}
           keyExtractor={(item) => (item.kind === 'timestamp' ? item.id : item.message.id)}
-          renderItem={({ item }) => <ThreadEntry item={item} header={header} />}
+          renderItem={({ item }) => (
+            <ThreadEntry item={item} header={header} localAuthorId={localAuthorId} />
+          )}
           contentContainerStyle={[
             styles.listContent,
             !hasMessages && styles.listContentEmpty,
@@ -138,16 +317,20 @@ export default function ChatConversationScreen() {
               maxLength={4000}
               returnKeyType="send"
               blurOnSubmit={false}
-              onSubmitEditing={onSubmitDraft}
+              onSubmitEditing={() => void onSubmitDraft()}
+              editable={!sending}
             />
             <Pressable
-              onPress={isDraftEmpty ? onSendLocationPress : onSubmitDraft}
+              onPress={isDraftEmpty ? onSendLocationPress : () => void onSubmitDraft()}
               style={styles.inputIconBtn}
               hitSlop={10}
+              disabled={sending}
               accessibilityRole="button"
               accessibilityLabel={isDraftEmpty ? 'Надіслати локацію' : 'Надіслати повідомлення'}
             >
-              {isDraftEmpty ? (
+              {sending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : isDraftEmpty ? (
                 <MaterialCommunityIcons name="map-marker-outline" size={22} color="#FFFFFF" />
               ) : (
                 <Ionicons name="paper-plane" size={20} color="#FFFFFF" marginRight={2} marginTop={2} />
@@ -214,7 +397,15 @@ function ChatHeader({
   );
 }
 
-function ThreadEntry({ item, header }: { item: ChatThreadListEntry; header: ChatThreadHeaderDto }) {
+function ThreadEntry({
+  item,
+  header,
+  localAuthorId,
+}: {
+  item: ChatThreadListEntry;
+  header: ChatThreadHeaderDto;
+  localAuthorId: string;
+}) {
   if (item.kind === 'timestamp') {
     return (
       <View style={styles.timestampWrap}>
@@ -222,17 +413,25 @@ function ThreadEntry({ item, header }: { item: ChatThreadListEntry; header: Chat
       </View>
     );
   }
-  return <MessageBubble message={item.message} peerAvatarUrl={header.participantAvatarUrl} />;
+  return (
+    <MessageBubble
+      message={item.message}
+      peerAvatarUrl={header.participantAvatarUrl}
+      localAuthorId={localAuthorId}
+    />
+  );
 }
 
 function MessageBubble({
   message,
   peerAvatarUrl,
+  localAuthorId,
 }: {
   message: ChatMessageDto;
   peerAvatarUrl: string | null;
+  localAuthorId: string;
 }) {
-  const outgoing = isOutgoingMessage(message, LOCAL_CHAT_PARTICIPANT_ID);
+  const outgoing = isOutgoingMessage(message, localAuthorId);
 
   if (outgoing) {
     return (

@@ -1,6 +1,6 @@
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Image,
@@ -13,9 +13,11 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MOCK_CHAT_PREVIEWS } from '@/data/mock-chats';
 import { mapChatPreviewDtoList, type ChatPreviewItem } from '@/types/chats';
+import { fetchConversations } from '@/utils/chatApi';
+import { mapConversationToPreview } from '@/utils/chatMappers';
 import { filterChatsByQuery, formatChatTime } from '@/utils/chats';
+import { getCurrentUserId } from '@/utils/currentUser';
 
 const TAB_BAR_BOTTOM_OFFSET = 18;
 const ACTIVE_RING = '#D9B5F5';
@@ -24,23 +26,42 @@ export default function ChatsTabScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [items, setItems] = useState<ChatPreviewItem[]>(() => mapChatPreviewDtoList(MOCK_CHAT_PREVIEWS));
+  const [items, setItems] = useState<ChatPreviewItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const filtered = useMemo(() => filterChatsByQuery(items, searchQuery), [items, searchQuery]);
 
   const loadFromServer = useCallback(async (): Promise<ChatPreviewItem[]> => {
-    return mapChatPreviewDtoList(MOCK_CHAT_PREVIEWS);
+    const currentUserId = await getCurrentUserId();
+    if (!currentUserId) {
+      throw new Error('Увійдіть у акаунт, щоб переглянути повідомлення');
+    }
+
+    const conversations = await fetchConversations();
+    const previews = conversations
+      .map((conversation) => mapConversationToPreview(conversation, currentUserId))
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+
+    return mapChatPreviewDtoList(previews);
   }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    setLoadError(null);
     try {
       const next = await loadFromServer();
       setItems(next);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Не вдалося завантажити чати';
+      setLoadError(message);
     } finally {
       setRefreshing(false);
     }
   }, [loadFromServer]);
+
+  useEffect(() => {
+    void onRefresh();
+  }, [onRefresh]);
 
   const renderItem = useCallback(({ item }: { item: ChatPreviewItem }) => {
     const avatarUri = item.participantAvatarUrl;
@@ -115,7 +136,9 @@ export default function ChatsTabScreen() {
           </View>
         }
         ListEmptyComponent={
-          <Text style={styles.emptyText}>Немає діалогів за вашим запитом</Text>
+          <Text style={styles.emptyText}>
+            {loadError ?? (searchQuery.trim() ? 'Немає діалогів за вашим запитом' : 'Поки що немає повідомлень')}
+          </Text>
         }
       />
     </SafeAreaView>
