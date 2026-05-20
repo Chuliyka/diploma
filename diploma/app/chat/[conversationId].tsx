@@ -17,6 +17,7 @@ import {
   mapConversationToThreadHeader,
   mapMessagesToThreadEntries,
 } from '@/utils/chatMappers';
+import { mergeMessageIntoEntries } from '@/utils/chatEntries';
 import { getCurrentUserId } from '@/utils/currentUser';
 import { getAccessToken } from '@/utils/session';
 import {
@@ -38,7 +39,6 @@ import {
   type ChatMessageDto,
   type ChatThreadHeaderDto,
   type ChatThreadListEntry,
-  type ChatThreadPayload,
 } from '@/types/chat-thread';
 
 function createOptimisticOutgoingMessage(
@@ -66,26 +66,31 @@ export default function ChatConversationScreen() {
   const conversationId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
   const participantIdParam = Array.isArray(rawParticipantId) ? rawParticipantId[0] : rawParticipantId;
 
-  const [thread, setThread] = useState<ChatThreadPayload | null>(null);
+  const [header, setHeader] = useState<ChatThreadHeaderDto | null>(null);
+  const [entries, setEntries] = useState<ChatThreadListEntry[]>([]);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
-  const [extraEntries, setExtraEntries] = useState<ChatThreadListEntry[]>([]);
   const listRef = useRef<FlatList<ChatThreadListEntry>>(null);
+  const resolvedConversationIdRef = useRef<number | null>(null);
+  const hasLoadedOnceRef = useRef(false);
 
   const localAuthorId = currentUserId !== null ? String(currentUserId) : '';
 
-  const entries = useMemo(() => {
-    if (!thread) return [];
-    return [...thread.entries, ...extraEntries];
-  }, [thread, extraEntries]);
+  const scrollToLatest = useCallback(() => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated: true });
+    });
+  }, []);
 
-  const loadThread = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    setExtraEntries([]);
+  const loadThread = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setLoading(true);
+      setLoadError(null);
+    }
 
     try {
       const userId = await getCurrentUserId();
@@ -104,6 +109,8 @@ export default function ChatConversationScreen() {
         resolvedConversationId = created.id;
       }
 
+      resolvedConversationIdRef.current = resolvedConversationId;
+
       const [conversation, messages] = await Promise.all([
         findConversationById(resolvedConversationId),
         fetchConversationMessages(resolvedConversationId),
@@ -113,38 +120,57 @@ export default function ChatConversationScreen() {
         throw new Error('Діалог не знайдено');
       }
 
-      const header = mapConversationToThreadHeader(conversation, userId);
-      if (!header) {
+      const nextHeader = mapConversationToThreadHeader(conversation, userId);
+      if (!nextHeader) {
         throw new Error('Не вдалося завантажити учасників чату');
       }
 
-      setThread({
-        header,
-        entries: mapMessagesToThreadEntries(messages, userId),
-      });
+      setHeader(nextHeader);
+      setEntries(mapMessagesToThreadEntries(messages, userId));
+      hasLoadedOnceRef.current = true;
 
       await markConversationRead(resolvedConversationId);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Не вдалося завантажити чат';
       setLoadError(message);
-      setThread(null);
+      if (!silent) {
+        setHeader(null);
+        setEntries([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [conversationId, participantIdParam]);
 
   useFocusEffect(
     useCallback(() => {
-      void loadThread();
+      void loadThread({ silent: hasLoadedOnceRef.current });
     }, [loadThread]),
   );
 
   useEffect(() => {
-    const numericId = Number(thread?.header.conversationId ?? conversationId);
+    const numericId = Number(header?.conversationId);
     if (!Number.isInteger(numericId) || numericId <= 0) return;
 
     let socket: Socket | null = null;
     let disposed = false;
+
+    const onNewMessage = (payload: ApiChatMessage) => {
+      if (Number(payload.conversationId) !== numericId) return;
+
+      void getCurrentUserId().then((userId) => {
+        if (!userId) return;
+        const dto = mapApiMessageToDto(payload, userId);
+        setEntries((prev) => mergeMessageIntoEntries(prev, dto));
+        scrollToLatest();
+
+        if (payload.senderId !== userId) {
+          void markConversationRead(numericId);
+        }
+      });
+    };
 
     const connect = async () => {
       if (disposed) return;
@@ -152,40 +178,32 @@ export default function ChatConversationScreen() {
       if (!token) return;
 
       socket = io(`${BASE_URL}/chat`, {
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
         auth: { token },
+        extraHeaders: { 'ngrok-skip-browser-warning': 'true' },
       });
 
       socket.on('connect', () => {
         socket?.emit('conversation:join', { conversationId: numericId });
       });
 
-      socket.on('message:new', (payload: ApiChatMessage) => {
-        if (payload.conversationId !== numericId) return;
-        void getCurrentUserId().then((userId) => {
-          if (!userId) return;
-          const dto = mapApiMessageToDto(payload, userId);
-          setExtraEntries((prev) => {
-            if (prev.some((e) => e.kind === 'message' && e.message.id === dto.id)) return prev;
-            if (thread?.entries.some((e) => e.kind === 'message' && e.message.id === dto.id)) {
-              return prev;
-            }
-            return [...prev, { kind: 'message', message: dto }];
-          });
-          if (payload.senderId !== userId) {
-            void markConversationRead(numericId);
-          }
-        });
-      });
+      socket.on('message:new', onNewMessage);
     };
 
     void connect();
 
     return () => {
       disposed = true;
+      socket?.off('message:new', onNewMessage);
       socket?.disconnect();
     };
-  }, [thread?.header.conversationId, conversationId]);
+  }, [header?.conversationId, scrollToLatest]);
+
+  useEffect(() => {
+    if (entries.length > 0) {
+      scrollToLatest();
+    }
+  }, [entries.length, scrollToLatest]);
 
   const handleBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -199,22 +217,16 @@ export default function ChatConversationScreen() {
   }, []);
 
   const onSubmitDraft = useCallback(async () => {
-    if (!thread || !draft.trim() || sending) return;
+    if (!header || !draft.trim() || sending || !localAuthorId) return;
 
     const text = draft.trim();
-    const conversationNumericId = Number(thread.header.conversationId);
+    const conversationNumericId = Number(header.conversationId);
     if (!Number.isInteger(conversationNumericId)) return;
 
-    const optimistic = createOptimisticOutgoingMessage(
-      thread.header.conversationId,
-      localAuthorId,
-      text,
-    );
-    setExtraEntries((prev) => [...prev, { kind: 'message', message: optimistic }]);
+    const optimistic = createOptimisticOutgoingMessage(header.conversationId, localAuthorId, text);
+    setEntries((prev) => mergeMessageIntoEntries(prev, optimistic));
     setDraft('');
-    requestAnimationFrame(() => {
-      listRef.current?.scrollToEnd({ animated: true });
-    });
+    scrollToLatest();
     setSending(true);
 
     try {
@@ -223,24 +235,19 @@ export default function ChatConversationScreen() {
       if (!userId) return;
 
       const dto = mapApiMessageToDto(saved, userId);
-      setExtraEntries((prev) =>
-        prev.map((entry) =>
-          entry.kind === 'message' && entry.message.id === optimistic.id
-            ? { kind: 'message', message: dto }
-            : entry,
-        ),
-      );
+      setEntries((prev) => mergeMessageIntoEntries(prev, dto, optimistic.id));
+      scrollToLatest();
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Не вдалося надіслати повідомлення';
       Alert.alert('Помилка', message);
-      setExtraEntries((prev) =>
+      setEntries((prev) =>
         prev.filter((entry) => !(entry.kind === 'message' && entry.message.id === optimistic.id)),
       );
       setDraft(text);
     } finally {
       setSending(false);
     }
-  }, [conversationId, currentUserId, draft, localAuthorId, sending, thread]);
+  }, [currentUserId, draft, header, localAuthorId, scrollToLatest, sending]);
 
   const isDraftEmpty = draft.trim().length === 0;
 
@@ -252,7 +259,7 @@ export default function ChatConversationScreen() {
     );
   }
 
-  if (!thread) {
+  if (!header) {
     return (
       <View style={[styles.notFoundRoot, { paddingTop: insets.top + 24 }]}>
         <Text style={styles.notFoundTitle}>{loadError ?? 'Чат не знайдено'}</Text>
@@ -263,7 +270,6 @@ export default function ChatConversationScreen() {
     );
   }
 
-  const { header } = thread;
   const hasMessages = entries.length > 0;
   const showStatus = Boolean(header.threadStatusRelativeLabel || header.threadStatusBody);
 

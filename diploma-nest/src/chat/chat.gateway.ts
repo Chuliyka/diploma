@@ -65,14 +65,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const userId = this.requireUser(client);
     const message = await this.chatService.sendMessage(userId, body);
-    const conversation = await this.chatService.findConversationForUser(userId, message.conversationId);
+    await this.broadcastNewMessage(message);
+    return { event: 'message:sent', data: message };
+  }
+
+  async broadcastNewMessage(message: { conversationId: number; senderId: number }) {
+    const conversation = await this.chatService.findConversationForUser(
+      message.senderId,
+      message.conversationId,
+    );
     const participantIds = conversation.participants.map((participant) => participant.userId);
 
     participantIds.forEach((participantId) => {
       this.server.to(this.userRoom(participantId)).emit('message:new', message);
     });
-
-    return { event: 'message:sent', data: message };
   }
 
   @SubscribeMessage('conversation:read')
