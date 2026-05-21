@@ -18,7 +18,7 @@ const STATUS_GROUPS: StatusGroup[] = [
       { emoji: '☕️', label: 'П’ю каву' },
       { emoji: '☕️', label: 'По каві?' },
       { emoji: '💨', label: 'На перекур' },
-      { emoji: '🍷', label: 'Келих вина ввечері' },
+      { emoji: '🍷', label: 'Келих вина' },
       { emoji: '🍹', label: 'На терасі' },
     ],
   },
